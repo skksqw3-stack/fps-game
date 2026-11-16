@@ -15,7 +15,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ⬇️ استفاده از JDK 17 (مورد نیاز برای AGP 8.x)
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -41,9 +40,7 @@ jobs:
         run: |
           if [ -f "gradlew" ]; then chmod +x gradlew; exit 0; fi
           mkdir -p gradle/wrapper
-          # ⬇️ دریافت فایل JAR نسخه 8.2
           wget -q "https://raw.githubusercontent.com/gradle/gradle/v8.2.0/gradle/wrapper/gradle-wrapper.jar" -O gradle/wrapper/gradle-wrapper.jar
-          
           cat > gradle/wrapper/gradle-wrapper.properties <<EOF
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
@@ -51,7 +48,6 @@ jobs:
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
           EOF
-          
           cat > gradlew <<'EOF'
           #!/bin/sh
           APP_HOME=$(cd "${0%/*}" && pwd -P)
@@ -60,6 +56,27 @@ jobs:
           exec "$JAVACMD" -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"
           EOF
           chmod +x gradlew
+
+      # ⬇️ مرحله جدید: اصلاح خودکار ناسازگاری نسخه جاوا و کاتلین
+      - name: Fix Java/Kotlin JVM Target Mismatch
+        working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
+        run: |
+          echo "🔍 اصلاح فایل app/build.gradle..."
+          # تنظیم هر دو روی نسخه 17
+          sed -i 's/sourceCompatibility JavaVersion.VERSION_1_8/sourceCompatibility JavaVersion.VERSION_17/g' app/build.gradle
+          sed -i 's/targetCompatibility JavaVersion.VERSION_1_8/targetCompatibility JavaVersion.VERSION_17/g' app/build.gradle
+          sed -i 's/jvmTarget = "1.8"/jvmTarget = "17"/g' app/build.gradle
+          sed -i "s/jvmTarget = '1.8'/jvmTarget = '17'/g" app/build.gradle
+          sed -i 's/jvmTarget = "1.7"/jvmTarget = "17"/g' app/build.gradle
+          sed -i "s/jvmTarget = '1.7'/jvmTarget = '17'/g" app/build.gradle
+          
+          # اگر اصلا تنظیمات jvmTarget وجود نداشت، آن را اضافه می‌کنیم
+          if ! grep -q 'jvmTarget' app/build.gradle; then
+            sed -i '/android {/a \ \ \ \ kotlinOptions {\n        jvmTarget = "17"\n    }' app/build.gradle
+          fi
+          
+          echo "✅ تنظیمات اعمال شد. محتوای بخش android:"
+          grep -A 10 "android {" app/build.gradle || true
 
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
