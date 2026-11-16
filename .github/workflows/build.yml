@@ -57,32 +57,27 @@ jobs:
           EOF
           chmod +x gradlew
 
-      # ⬇️ مرحله جدید: اصلاح خودکار ناسازگاری نسخه جاوا و کاتلین
-      - name: Fix Java/Kotlin JVM Target Mismatch
+      # ⬇️ روش قدرتمند: تزریق تنظیمات جاوا به gradle.properties
+      - name: Force JVM Target to 17 in gradle.properties
         working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
         run: |
-          echo "🔍 اصلاح فایل app/build.gradle..."
-          # تنظیم هر دو روی نسخه 17
-          sed -i 's/sourceCompatibility JavaVersion.VERSION_1_8/sourceCompatibility JavaVersion.VERSION_17/g' app/build.gradle
-          sed -i 's/targetCompatibility JavaVersion.VERSION_1_8/targetCompatibility JavaVersion.VERSION_17/g' app/build.gradle
-          sed -i 's/jvmTarget = "1.8"/jvmTarget = "17"/g' app/build.gradle
-          sed -i "s/jvmTarget = '1.8'/jvmTarget = '17'/g" app/build.gradle
-          sed -i 's/jvmTarget = "1.7"/jvmTarget = "17"/g' app/build.gradle
-          sed -i "s/jvmTarget = '1.7'/jvmTarget = '17'/g" app/build.gradle
-          
-          # اگر اصلا تنظیمات jvmTarget وجود نداشت، آن را اضافه می‌کنیم
-          if ! grep -q 'jvmTarget' app/build.gradle; then
-            sed -i '/android {/a \ \ \ \ kotlinOptions {\n        jvmTarget = "17"\n    }' app/build.gradle
-          fi
-          
-          echo "✅ تنظیمات اعمال شد. محتوای بخش android:"
-          grep -A 10 "android {" app/build.gradle || true
+          echo "org.gradle.java.home=$JAVA_HOME" >> gradle.properties
+          echo "org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8" >> gradle.properties
+          echo "android.compileOptions.sourceCompatibility=17" >> gradle.properties
+          echo "android.compileOptions.targetCompatibility=17" >> gradle.properties
+          echo "✅ gradle.properties اصلاح شد."
+          cat gradle.properties
 
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
         run: |
           set +e
-          ./gradlew assembleDebug --no-daemon --stacktrace > build.log 2>&1
+          # ⬇️ ارسال آرگومان‌های JVM به صورت مستقیم به گریدل
+          ./gradlew assembleDebug --no-daemon --stacktrace \
+            -Dorg.gradle.java.home=$JAVA_HOME \
+            -Pandroid.compileOptions.sourceCompatibility=17 \
+            -Pandroid.compileOptions.targetCompatibility=17 > build.log 2>&1
+          
           EXIT=$?
           tail -n 100 build.log
           if [ $EXIT -ne 0 ]; then
