@@ -1,10 +1,53 @@
+name: Build Kotlin Android Project
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Extract ZIP file
+        run: |
+          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then echo "❌ ZIP نیست"; exit 1; fi
+          echo "✅ ZIP: $ZIP_FILE"
+          mkdir -p extracted
+          unzip -o "$ZIP_FILE" -d extracted
+          echo "--- محتوای extracted ---"
+          ls -la extracted
+
+      - name: Locate project root
+        id: locate
+        run: |
+          PROJECT_DIR=$(find extracted -maxdepth 3 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 | xargs -r dirname)
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "❌ settings.gradle پیدا نشد"
+            find extracted -maxdepth 4 -type f
+            exit 1
+          fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_OUTPUT
+          echo "✅ PROJECT_DIR=$PROJECT_DIR"
+
       - name: Setup Gradle Wrapper
         working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
         run: |
-          set +e          # ⬅️  غیرفعال کردن خروج خودکار روی خطا
+          set +e
           set -x
-
-          echo "===== شروع Setup Gradle Wrapper ====="
 
           if [ -f "gradlew" ]; then
             echo "✅ gradlew موجود است"
@@ -12,15 +55,11 @@
             exit 0
           fi
 
-          echo "⚠️ gradlew نیست — تعیین نسخه Gradle"
-
-          # ⬇️ جستجو در همه فایل‌های ممکن، با || true که exit 1 grep را نادیده بگیرد
           AGP_VERSION=""
           AGP_VERSION=$(grep -rhoE "com\.android\.tools\.build:gradle:[0-9]+\.[0-9]+\.[0-9]+" \
               --include="*.gradle" --include="*.gradle.kts" --include="*.toml" . 2>/dev/null \
               | head -n1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+$" || true)
 
-          # اگر هنوز خالی است، از plugin block در settings.gradle هم امتحان کن
           if [ -z "$AGP_VERSION" ]; then
             AGP_VERSION=$(grep -rhoE "com\.android\.application[\"']? version [\"'][0-9]+\.[0-9]+\.[0-9]+" \
                 --include="*.gradle" --include="*.gradle.kts" . 2>/dev/null \
@@ -38,45 +77,53 @@
             7.1*) GRADLE_VERSION="7.2" ;;
             7.0*) GRADLE_VERSION="7.0.2" ;;
             4.*|3.*) GRADLE_VERSION="6.7.1" ;;
-            "") echo "⚠️ AGP پیدا نشد — استفاده از Gradle 7.5 به عنوان پیش‌فرض" ;;
           esac
           echo "⬇️ Gradle version: $GRADLE_VERSION"
 
-          echo "===== دانلود Gradle ====="
           wget -q "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -O /tmp/gradle.zip
-          WGET_EXIT=$?
-          echo "wget exit=$WGET_EXIT, size=$(stat -c%s /tmp/gradle.zip 2>/dev/null || echo 0)"
-          if [ $WGET_EXIT -ne 0 ] || [ ! -s /tmp/gradle.zip ]; then
+          if [ $? -ne 0 ] || [ ! -s /tmp/gradle.zip ]; then
             echo "❌ دانلود Gradle شکست خورد"
             exit 1
           fi
 
-          echo "===== استخراج Gradle ====="
           unzip -q /tmp/gradle.zip -d /tmp
-          UNZIP_EXIT=$?
-          echo "unzip exit=$UNZIP_EXIT"
-          if [ $UNZIP_EXIT -ne 0 ]; then
+          if [ $? -ne 0 ]; then
             echo "❌ استخراج Gradle شکست خورد"
             exit 1
           fi
 
-          ls -la /tmp/gradle-${GRADLE_VERSION}/bin/ || { echo "❌ پوشه gradle پیدا نشد"; exit 1; }
-
-          echo "===== اجرای gradle wrapper ====="
           /tmp/gradle-${GRADLE_VERSION}/bin/gradle wrapper --gradle-version ${GRADLE_VERSION} --no-daemon --stacktrace
-          WRAPPER_EXIT=$?
-          echo "gradle wrapper exit=$WRAPPER_EXIT"
-          if [ $WRAPPER_EXIT -ne 0 ]; then
+          if [ $? -ne 0 ]; then
             echo "❌ ساخت wrapper شکست خورد"
-            exit $WRAPPER_EXIT
+            exit 1
           fi
 
           if [ ! -f "gradlew" ]; then
-            echo "❌ gradlew بعد از اجرای wrapper هم ساخته نشد"
-            ls -la
+            echo "❌ gradlew ساخته نشد"
             exit 1
           fi
 
           chmod +x gradlew
           echo "✅ gradlew ساخته شد"
           set +x
+
+      - name: Build Debug APK
+        working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
+        run: |
+          set +e
+          ./gradlew assembleDebug --no-daemon --stacktrace > build.log 2>&1
+          EXIT=$?
+          tail -n 100 build.log
+          if [ $EXIT -ne 0 ]; then
+            echo ""
+            echo "===== خطاهای اصلی ====="
+            grep -nE "FAILURE|What went wrong|error:|Caused by|Unsupported|incompatible|Could not" build.log | head -n 40
+            exit $EXIT
+          fi
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: ${{ steps.locate.outputs.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
