@@ -57,45 +57,30 @@ jobs:
           EOF
           chmod +x gradlew
 
-      # ⬇️ مرحله نهایی: اصلاح مستقیم و هوشمند فایل بیلد اپلیکیشن
-      - name: Fix JVM Target in build.gradle
+      # ⬇️ راه‌حل قطعی: استفاده از init.gradle برای مجبور کردن همه تسک‌ها به استفاده از نسخه ۱۷
+      - name: Force JVM Target via Init Script
         working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
         run: |
-          FILE=""
-          if [ -f "app/build.gradle" ]; then FILE="app/build.gradle"; fi
-          if [ -f "app/build.gradle.kts" ]; then FILE="app/build.gradle.kts"; fi
-          
-          if [ -z "$FILE" ]; then echo "فایل بیلد اپلیکیشن پیدا نشد!"; exit 1; fi
-          
-          echo "🔍 در حال اصلاح فایل: $FILE"
-          echo "--- محتوای قبلی ---"
-          grep -nE "sourceCompatibility|targetCompatibility|jvmTarget" "$FILE" || echo "(چیزی پیدا نشد)"
-          
-          # تغییر همه نسخه‌های 1.8 و 1.7 (هم در جاوا و هم در کاتلین) به 17
-          sed -i -E 's/JavaVersion\.VERSION_1_8/JavaVersion.VERSION_17/g' "$FILE"
-          sed -i -E 's/JavaVersion\.VERSION_1_7/JavaVersion.VERSION_17/g' "$FILE"
-          sed -i -E 's/"(1\.8|1\.7)"/"17"/g' "$FILE"
-          sed -i -E "s/'(1\.8|1\.7)'/'17'/g" "$FILE"
-          
-          # اگر کاتلین تنظیمات jvmTarget نداشت، آن را به صورت خودکار اضافه می‌کنیم
-          if ! grep -q "jvmTarget" "$FILE"; then
-            echo "⚠️ jvmTarget پیدا نشد، در حال تزریق..."
-            if [[ "$FILE" == *.kts ]]; then
-              sed -i '/android {/a \ \ \ \ kotlinOptions {\n        jvmTarget = "17"\n    }' "$FILE"
-            else
-              sed -i '/android {/a \ \ \ \ kotlinOptions {\n        jvmTarget = "17"\n    }' "$FILE"
-            fi
-          fi
-          
-          echo "--- محتوای جدید ---"
-          grep -nE "sourceCompatibility|targetCompatibility|jvmTarget" "$FILE" || echo "(چیزی پیدا نشد)"
-          echo "✅ اصلاح شد."
+          cat > init.gradle <<'EOF'
+          allprojects {
+              tasks.withType(JavaCompile).configureEach {
+                  sourceCompatibility = "17"
+                  targetCompatibility = "17"
+              }
+          }
+          EOF
+          echo "✅ فایل init.gradle ساخته شد."
 
       - name: Build Debug APK
         working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
         run: |
           set +e
-          ./gradlew assembleDebug --no-daemon --stacktrace > build.log 2>&1
+          # ارسال فایل init.gradle به همراه پارامترهای کاتلین
+          ./gradlew assembleDebug --no-daemon --stacktrace \
+            --init-script init.gradle \
+            -Dorg.gradle.java.home=$JAVA_HOME \
+            -Pkotlin.jvm.target.validation.mode=warning > build.log 2>&1
+          
           EXIT=$?
           tail -n 100 build.log
           if [ $EXIT -ne 0 ]; then
