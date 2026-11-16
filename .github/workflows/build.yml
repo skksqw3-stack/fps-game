@@ -1,72 +1,77 @@
-      - name: Setup Gradle Wrapper (Manual)
+name: Build Kotlin Android Project
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 11
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Extract ZIP file
+        run: |
+          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
+          if [ -z "$ZIP_FILE" ]; then echo "ZIP NOT FOUND"; exit 1; fi
+          mkdir -p extracted
+          unzip -o "$ZIP_FILE" -d extracted
+
+      - name: Locate project root
+        id: locate
+        run: |
+          PROJECT_DIR=$(find extracted -maxdepth 3 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 | xargs -r dirname)
+          if [ -z "$PROJECT_DIR" ]; then exit 1; fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_OUTPUT
+
+      - name: Setup Gradle Wrapper
         working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
         run: |
-          set +e
-
-          if [ -f "gradlew" ]; then
-            echo "✅ gradlew موجود است"
-            chmod +x gradlew
-            exit 0
-          fi
-
-          echo "⚠️ gradlew نیست — دریافت مستقیم از مخزن رسمی Gradle"
-
-          # نسخه Gradle مناسب برای AGP 7.x (پیش‌فرض امن)
-          GRADLE_VERSION="7.5"
-          
-          # ساخت پوشه wrapper
+          if [ -f "gradlew" ]; then chmod +x gradlew; exit 0; fi
           mkdir -p gradle/wrapper
-
-          # ۱. دانلود فایل gradle-wrapper.jar از مخزن رسمی Gradle
-          # (این فایل مخصوص نسخه ۷.۵ است)
-          wget -q "https://raw.githubusercontent.com/gradle/gradle/v7.5.0/gradle/wrapper/gradle-wrapper.jar" \
-               -O gradle/wrapper/gradle-wrapper.jar
-          
-          if [ ! -f "gradle/wrapper/gradle-wrapper.jar" ] || [ ! -s "gradle/wrapper/gradle-wrapper.jar" ]; then
-            echo "❌ دانلود gradle-wrapper.jar شکست خورد"
-            exit 1
-          fi
-
-          # ۲. ساخت فایل gradle-wrapper.properties
+          wget -q "https://raw.githubusercontent.com/gradle/gradle/v7.5.0/gradle/wrapper/gradle-wrapper.jar" -O gradle/wrapper/gradle-wrapper.jar
           cat > gradle/wrapper/gradle-wrapper.properties <<EOF
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-bin.zip
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
           EOF
-
-          # ۳. ساخت فایل gradlew (اسکریپت شل)
           cat > gradlew <<'EOF'
           #!/bin/sh
           APP_HOME=$(cd "${0%/*}" && pwd -P)
           CLASSPATH=$APP_HOME/gradle/wrapper/gradle-wrapper.jar
-          if [ -n "$JAVA_HOME" ] ; then
-              JAVACMD=$JAVA_HOME/bin/java
-          else
-              JAVACMD=java
-          fi
+          if [ -n "$JAVA_HOME" ] ; then JAVACMD=$JAVA_HOME/bin/java; else JAVACMD=java; fi
           exec "$JAVACMD" -classpath "$CLASSPATH" org.gradle.wrapper.GradleWrapperMain "$@"
           EOF
           chmod +x gradlew
 
-          # ۴. ساخت فایل gradlew.bat (برای ویندوز - اختیاری)
-          cat > gradlew.bat <<'EOF'
-          @rem Gradle startup script for Windows
-          @if "%DEBUG%"=="" @echo off
-          set DIRNAME=%~dp0
-          if "%DIRNAME%"=="" set DIRNAME=.
-          set APP_BASE_NAME=%~n0
-          set APP_HOME=%DIRNAME%
-          set CLASSPATH=%APP_HOME%\gradle\wrapper\gradle-wrapper.jar
-          if defined JAVA_HOME goto findJavaFromJavaHome
-          set JAVA_EXE=java.exe
-          goto execute
-          :findJavaFromJavaHome
-          set JAVA_EXE=%JAVA_HOME%\bin\java.exe
-          :execute
-          "%JAVA_EXE%" %DEFAULT_JVM_OPTS% %JAVA_OPTS% -classpath "%CLASSPATH%" org.gradle.wrapper.GradleWrapperMain %*
-          EOF
+      - name: Build Debug APK
+        working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
+        run: |
+          set +e
+          ./gradlew assembleDebug --no-daemon --stacktrace > build.log 2>&1
+          EXIT=$?
+          tail -n 100 build.log
+          if [ $EXIT -ne 0 ]; then
+            grep -nE "FAILURE|What went wrong|error:|Caused by|Unsupported|incompatible|Could not" build.log | head -n 40
+            exit $EXIT
+          fi
 
-          echo "✅ gradlew و wrapper به صورت دستی ساخته شدند"
-          ls -la gradlew gradle/wrapper/
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: ${{ steps.locate.outputs.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
