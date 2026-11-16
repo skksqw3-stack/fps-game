@@ -1,7 +1,7 @@
       - name: Setup Gradle Wrapper
         working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
         run: |
-          set +e          # ⬅️ غیرفعال کردن خروج خودکار روی خطا
+          set +e          # ⬅️  غیرفعال کردن خروج خودکار روی خطا
           set -x
 
           echo "===== شروع Setup Gradle Wrapper ====="
