@@ -1,69 +1,9 @@
-name: Build Kotlin Android Project
-
-on:
-  push:
-    branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up JDK 11
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '11'
-
-      - name: Extract ZIP file
-        run: |
-          ZIP_FILE=$(find . -maxdepth 2 -name "*.zip" | head -n 1)
-          if [ -z "$ZIP_FILE" ]; then echo "❌ ZIP نیست"; exit 1; fi
-          echo "✅ ZIP: $ZIP_FILE"
-          mkdir -p extracted
-          unzip -o "$ZIP_FILE" -d extracted
-          echo "--- محتوای extracted ---"
-          ls -la extracted
-
-      - name: Locate project root
-        id: locate
-        run: |
-          PROJECT_DIR=$(find extracted -maxdepth 3 \( -name "settings.gradle" -o -name "settings.gradle.kts" \) | head -n 1 | xargs -r dirname)
-          if [ -z "$PROJECT_DIR" ]; then
-            echo "❌ settings.gradle پیدا نشد"
-            find extracted -maxdepth 4 -type f
-            exit 1
-          fi
-          echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_OUTPUT
-          echo "✅ PROJECT_DIR=$PROJECT_DIR"
-          ls -la "$PROJECT_DIR"
-
-      - name: Show project files
-        working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
-        run: |
-          echo "===== root build.gradle ====="
-          cat build.gradle 2>/dev/null || cat build.gradle.kts 2>/dev/null || echo "ندارد"
-          echo ""
-          echo "===== app/build.gradle ====="
-          cat app/build.gradle 2>/dev/null || cat app/build.gradle.kts 2>/dev/null || echo "ندارد"
-          echo ""
-          echo "===== gradle.properties ====="
-          cat gradle.properties 2>/dev/null || echo "ندارد"
-          echo ""
-          echo "===== gradle/wrapper ====="
-          ls -la gradle/wrapper/ 2>/dev/null || echo "پوشه wrapper ندارد"
-
-      # ⬇️ مرحله اصلاح‌شده با نمایش دقیق خطا
       - name: Setup Gradle Wrapper
         working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
         run: |
+          set +e          # ⬅️ غیرفعال کردن خروج خودکار روی خطا
           set -x
+
           echo "===== شروع Setup Gradle Wrapper ====="
 
           if [ -f "gradlew" ]; then
@@ -74,10 +14,19 @@ jobs:
 
           echo "⚠️ gradlew نیست — تعیین نسخه Gradle"
 
+          # ⬇️ جستجو در همه فایل‌های ممکن، با || true که exit 1 grep را نادیده بگیرد
           AGP_VERSION=""
-          if [ -f "build.gradle" ]; then
-            AGP_VERSION=$(grep -oE "com.android.tools.build:gradle:[0-9]+\.[0-9]+\.[0-9]+" build.gradle | head -n1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+$")
+          AGP_VERSION=$(grep -rhoE "com\.android\.tools\.build:gradle:[0-9]+\.[0-9]+\.[0-9]+" \
+              --include="*.gradle" --include="*.gradle.kts" --include="*.toml" . 2>/dev/null \
+              | head -n1 | grep -oE "[0-9]+\.[0-9]+\.[0-9]+$" || true)
+
+          # اگر هنوز خالی است، از plugin block در settings.gradle هم امتحان کن
+          if [ -z "$AGP_VERSION" ]; then
+            AGP_VERSION=$(grep -rhoE "com\.android\.application[\"']? version [\"'][0-9]+\.[0-9]+\.[0-9]+" \
+                --include="*.gradle" --include="*.gradle.kts" . 2>/dev/null \
+                | grep -oE "[0-9]+\.[0-9]+\.[0-9]+$" | head -n1 || true)
           fi
+
           echo "AGP detected: '${AGP_VERSION}'"
 
           GRADLE_VERSION="7.5"
@@ -89,10 +38,10 @@ jobs:
             7.1*) GRADLE_VERSION="7.2" ;;
             7.0*) GRADLE_VERSION="7.0.2" ;;
             4.*|3.*) GRADLE_VERSION="6.7.1" ;;
+            "") echo "⚠️ AGP پیدا نشد — استفاده از Gradle 7.5 به عنوان پیش‌فرض" ;;
           esac
           echo "⬇️ Gradle version: $GRADLE_VERSION"
 
-          # دانلود با بررسی خطا
           echo "===== دانلود Gradle ====="
           wget -q "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -O /tmp/gradle.zip
           WGET_EXIT=$?
@@ -131,33 +80,3 @@ jobs:
           chmod +x gradlew
           echo "✅ gradlew ساخته شد"
           set +x
-
-      - name: Cache Gradle
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*') }}
-
-      - name: Build Debug APK
-        working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
-        run: |
-          set +e
-          ./gradlew assembleDebug --no-daemon --stacktrace > build.log 2>&1
-          EXIT=$?
-          echo "===== ۱۰۰ خط آخر ====="
-          tail -n 100 build.log
-          if [ $EXIT -ne 0 ]; then
-            echo ""
-            echo "===== خطاهای اصلی ====="
-            grep -nE "FAILURE|What went wrong|error:|Caused by|Unsupported|incompatible|Could not" build.log | head -n 40
-            exit $EXIT
-          fi
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-apk
-          path: ${{ steps.locate.outputs.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
