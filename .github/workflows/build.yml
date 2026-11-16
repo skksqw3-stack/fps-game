@@ -1,0 +1,105 @@
+name: Build Kotlin Project
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:  # امکان اجرای دستی
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. دریافت کد از ریپازیتوری
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. نصب جاوا (JDK 17 - قابل تغییر)
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # 3. استخراج فایل ZIP
+      - name: Extract ZIP file
+        run: |
+          echo "لیست فایل‌های موجود:"
+          ls -la
+          
+          # پیدا کردن اولین فایل zip در ریشه پروژه
+          ZIP_FILE=$(find . -maxdepth 1 -name "*.zip" | head -n 1)
+          
+          if [ -z "$ZIP_FILE" ]; then
+            echo "❌ هیچ فایل ZIP پیدا نشد!"
+            exit 1
+          fi
+          
+          echo "✅ فایل ZIP پیدا شد: $ZIP_FILE"
+          
+          # ساخت پوشه مقصد و استخراج
+          mkdir -p extracted
+          unzip -o "$ZIP_FILE" -d extracted
+          
+          echo "محتوای پوشه extracted:"
+          ls -la extracted
+
+      # 4. پیدا کردن مسیر پروژه (اگر داخل ZIP پوشه اضافی باشد)
+      - name: Locate project root
+        id: locate
+        run: |
+          # اگر فایل gradlew در extracted هست، همان ریشه است
+          if [ -f "extracted/gradlew" ]; then
+            echo "PROJECT_DIR=extracted" >> $GITHUB_OUTPUT
+          else
+            # در غیر این صورت اولین پوشه‌ای که gradlew دارد را پیدا کن
+            PROJECT_DIR=$(find extracted -maxdepth 3 -name "gradlew" -type f | head -n 1 | xargs -r dirname)
+            if [ -z "$PROJECT_DIR" ]; then
+              echo "❌ فایل gradlew پیدا نشد! مطمئن شوید پروژه Gradle است."
+              find extracted -maxdepth 3 -type f | head -n 30
+              exit 1
+            fi
+            echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_OUTPUT
+          fi
+          
+          echo "پوشه پروژه: $PROJECT_DIR"
+
+      # 5. دادن مجوز اجرا به gradlew
+      - name: Make gradlew executable
+        run: chmod +x ${{ steps.locate.outputs.PROJECT_DIR }}/gradlew
+
+      # 6. کش کردن وابستگی‌های Gradle (سرعت بیشتر)
+      - name: Cache Gradle packages
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-gradle-
+
+      # 7. بیلد پروژه
+      - name: Build with Gradle
+        working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
+        run: |
+          ./gradlew build --no-daemon --stacktrace
+
+      # 8. اجرای تست‌ها (اختیاری - اگر نیاز نیست حذف کنید)
+      - name: Run tests
+        working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
+        run: ./gradlew test --no-daemon
+        continue-on-error: true
+
+      # 9. آپلود خروجی‌های بیلد (APK، JAR، و ...)
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-output
+          path: |
+            ${{ steps.locate.outputs.PROJECT_DIR }}/build/outputs/
+            ${{ steps.locate.outputs.PROJECT_DIR }}/build/libs/
+          if-no-files-found: warn
+          retention-days: 7
