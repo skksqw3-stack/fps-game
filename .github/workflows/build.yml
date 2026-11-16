@@ -15,11 +15,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up JDK 11
+      # ⬇️ استفاده از JDK 17 (مورد نیاز برای AGP 8.x)
+      - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
-          java-version: '11'
+          java-version: '17'
 
       - name: Extract ZIP file
         run: |
@@ -35,19 +36,22 @@ jobs:
           if [ -z "$PROJECT_DIR" ]; then exit 1; fi
           echo "PROJECT_DIR=$PROJECT_DIR" >> $GITHUB_OUTPUT
 
-      - name: Setup Gradle Wrapper
+      - name: Setup Gradle Wrapper (v8.2)
         working-directory: ${{ steps.locate.outputs.PROJECT_DIR }}
         run: |
           if [ -f "gradlew" ]; then chmod +x gradlew; exit 0; fi
           mkdir -p gradle/wrapper
-          wget -q "https://raw.githubusercontent.com/gradle/gradle/v7.5.0/gradle/wrapper/gradle-wrapper.jar" -O gradle/wrapper/gradle-wrapper.jar
+          # ⬇️ دریافت فایل JAR نسخه 8.2
+          wget -q "https://raw.githubusercontent.com/gradle/gradle/v8.2.0/gradle/wrapper/gradle-wrapper.jar" -O gradle/wrapper/gradle-wrapper.jar
+          
           cat > gradle/wrapper/gradle-wrapper.properties <<EOF
           distributionBase=GRADLE_USER_HOME
           distributionPath=wrapper/dists
-          distributionUrl=https\://services.gradle.org/distributions/gradle-7.5-bin.zip
+          distributionUrl=https\://services.gradle.org/distributions/gradle-8.2-bin.zip
           zipStoreBase=GRADLE_USER_HOME
           zipStorePath=wrapper/dists
           EOF
+          
           cat > gradlew <<'EOF'
           #!/bin/sh
           APP_HOME=$(cd "${0%/*}" && pwd -P)
@@ -65,6 +69,7 @@ jobs:
           EXIT=$?
           tail -n 100 build.log
           if [ $EXIT -ne 0 ]; then
+            echo "===== خطاهای اصلی ====="
             grep -nE "FAILURE|What went wrong|error:|Caused by|Unsupported|incompatible|Could not" build.log | head -n 40
             exit $EXIT
           fi
